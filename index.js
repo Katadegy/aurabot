@@ -76,32 +76,24 @@ const client = new Client({
 // ==========================================
 const SERVER_NAME = "Auralune's community";
 
-// Rolle, die man nach Regel-Bestätigung bekommt ("Zuschauer")
 const VERIFIED_ROLE_ID = "1504963421345419352";
 
-// Kanäle
-const WELCOME_CHANNEL_ID = "1504963423241240636";  // Willkommensnachricht
-const RULES_CHANNEL_ID   = "1504963422733734008";  // Regeln
-const ROLES_CHANNEL_ID   = "1504998862132084807";  // Rollenauswahl
-const MAINCHAT_CHANNEL_ID = "1504963423241240642"; // Haupt-Chat
-const STREAM_ALERT_CHANNEL_ID = "1504963423681773572"; // Stream-Ankündigungen
+const WELCOME_CHANNEL_ID = "1504963423241240636";
+const RULES_CHANNEL_ID   = "1504963422733734008";
+const ROLES_CHANNEL_ID   = "1504998862132084807";
+const MAINCHAT_CHANNEL_ID = "1504963423241240642";
+const STREAM_ALERT_CHANNEL_ID = "1504963423681773572";
 
-// Rolle, die bei einer Live-Ankündigung gepingt wird
 const STREAM_ALERTS_ROLE_ID = "1507128739895578676";
 
-// Twitch-Kanal
 const TWITCH_USER_LOGIN = "Auralune1__";
 const TWITCH_CHANNEL_URL = `https://www.twitch.tv/${TWITCH_USER_LOGIN}`;
 
-// Wie oft (in ms) geprüft wird, ob der Stream live ist
-const TWITCH_POLL_INTERVAL_MS = 60 * 1000; // 1 Minute
+const TWITCH_POLL_INTERVAL_MS = 60 * 1000;
 
-// ── Bild-URLs ─────────────────────────────
 const WELCOME_BANNER_URL = "https://i.imgur.com/ou9vHWx.png";
-const ROLES_OVERVIEW_IMAGE_URL = "https://i.imgur.com/nJh62io.gif";
 const ROLES_THUMBNAIL_URL = "https://i.imgur.com/oeyctCl.gif";
 
-// Hintergrundbilder unten in den Kategorie-Embeds
 const categoryImages = {
   cat_pronouns:      "",
   cat_platforms:     "",
@@ -110,7 +102,6 @@ const categoryImages = {
   cat_notifications: ""
 };
 
-// ── Farben ────────────────────────────────
 const SERVER_COLOR = '#D6559C';
 const GROUP_COLORS = {
   pronouns:      '#F2A9D0',
@@ -123,18 +114,19 @@ const GROUP_COLORS = {
 let rulesMessageId = null;
 let twitchWasLive = null;
 
-// Merkt sich Test-Nachrichten pro Kanal
-// Format: { [channelId]: { [catKey]: messageId } }
+// Merkt sich Test-Nachrichten pro Kanal: { [channelId]: { [catKey]: messageId } }
 const testMessageIds = {};
 
 // ==========================================
 // 4. ROLLEN-KATEGORIEN
+// unique: true -> immer nur EINE Rolle der Kategorie gleichzeitig aktiv.
 // ==========================================
 const categories = {
   cat_pronouns: {
     label: '🏳️‍🌈 Pronomen',
     description: 'Zeig anderen, wie sie dich ansprechen können.',
     group: 'pronouns',
+    unique: true,
     roles: [
       { name: 'He/Him',    emoji: '💙', desc: 'Wird mit er/ihm angesprochen.' },
       { name: 'She/Her',   emoji: '💗', desc: 'Wird mit sie/ihr angesprochen.' },
@@ -145,6 +137,7 @@ const categories = {
     label: '🎮 Plattformen',
     description: 'Auf welcher Plattform zockst du am liebsten?',
     group: 'platforms',
+    unique: false,
     roles: [
       { name: 'PC',          emoji: '🖥️', desc: 'Zockt am PC.' },
       { name: 'Xbox',        emoji: '🎮', desc: 'Zockt auf der Xbox.' },
@@ -157,6 +150,7 @@ const categories = {
     label: '🕹️ Game Genres',
     description: 'Welche Spiele-Genres ziehen dich rein?',
     group: 'genres',
+    unique: false,
     roles: [
       { name: 'Horror',       emoji: '👻', desc: 'Steht auf gruselige Spiele.' },
       { name: 'Simulationen', emoji: '🏗️', desc: 'Liebt Simulationen & Aufbauspiele.' },
@@ -168,6 +162,7 @@ const categories = {
     label: '🌸 Deine Aura',
     description: 'Was beschreibt dich am besten? Wähle die Rolle die zu deiner Energie passt.',
     group: 'aura',
+    unique: false,
     roles: [
       { name: 'Nachteule',   emoji: '🌙', desc: 'Du lebst nachts auf. Beste Streams um Mitternacht.' },
       { name: 'Sakura Vibe', emoji: '🌸', desc: 'Entspannt, ästhetisch und einfach nice.' },
@@ -180,6 +175,7 @@ const categories = {
     label: '🔔 Benachrichtigungen',
     description: 'Entscheide welche Pings du auf diesem Server erhalten möchtest.',
     group: 'notifications',
+    unique: false,
     roles: [
       {
         name: 'Stream Alerts', emoji: '🔴',
@@ -190,7 +186,6 @@ const categories = {
   }
 };
 
-// Emoji, mit dem die Regeln bestätigt werden
 const RULES_EMOJI = '✅';
 
 let setupMessageIds = {
@@ -202,7 +197,6 @@ let setupMessageIds = {
   cat_notifications:  ""
 };
 
-// Gespeicherte Werte laden
 {
   const saved = loadStorage();
   if (saved.rulesMessageId) rulesMessageId = saved.rulesMessageId;
@@ -233,8 +227,6 @@ async function withLock(key, fn) {
 // ==========================================
 // 4b. HILFSFUNKTIONEN
 // ==========================================
-
-// Entfernt Emojis + normalisiert für Rollenname-Vergleich
 function normalizeRoleName(str) {
   return str
       .replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}\uFE0F\u200D]/gu, '')
@@ -243,14 +235,11 @@ function normalizeRoleName(str) {
       .toLowerCase();
 }
 
-// Findet die echte Discord-Rolle per exaktem Namensvergleich (nach Emoji-Strip)
 function findRoleByName(guild, name) {
   const target = normalizeRoleName(name);
   return guild.roles.cache.find((ro) => normalizeRoleName(ro.name) === target) || null;
 }
 
-// Löst eine Rollen-Definition zur echten Discord-Rolle auf.
-// FIX: Loggt wenn eine Rolle nicht gefunden wird, um Namens-Mismatches zu erkennen.
 function resolveRole(guild, roleDef) {
   if (roleDef.id) {
     const role = guild.roles.cache.get(roleDef.id);
@@ -262,16 +251,12 @@ function resolveRole(guild, roleDef) {
   return role;
 }
 
-// Wandelt ein im Code hinterlegtes Emoji in das Format um, das message.react() erwartet.
 function emojiForReact(emojiStr) {
   const match = emojiStr.match(/^<(a)?:(\w+):(\d+)>$/);
   if (match) return `${match[2]}:${match[3]}`;
   return emojiStr;
 }
 
-// FIX: Variation-Selector \uFE0F wird von Discord bei Reactions entfernt.
-// Emojis wie 🖥️, 🕹️, 🏗️ enthalten \uFE0F im Code aber NICHT in der Reaction.
-// Beide Seiten werden jetzt vor dem Vergleich bereinigt.
 function emojiMatches(reactionEmoji, defEmojiStr) {
   const custom = defEmojiStr.match(/^<(a)?:(\w+):(\d+)>$/);
   if (custom) return reactionEmoji.id === custom[3];
@@ -279,7 +264,6 @@ function emojiMatches(reactionEmoji, defEmojiStr) {
   return strip(reactionEmoji.name) === strip(defEmojiStr);
 }
 
-// Durchsucht Channel-Verlauf nach bestehendem Bot-Embed (Fallback nach Neustart)
 async function findExistingBotEmbed(channel, title) {
   try {
     const messages = await channel.messages.fetch({ limit: 100 });
@@ -294,7 +278,6 @@ async function findExistingBotEmbed(channel, title) {
   }
 }
 
-// Entfernt alle bisherigen Reactions einer Nachricht und setzt neue.
 async function syncReactions(message, emojiList) {
   try {
     await message.reactions.removeAll();
@@ -310,7 +293,6 @@ async function syncReactions(message, emojiList) {
   }
 }
 
-// Baut das Welcome-Embed für einen neuen Member
 function buildWelcomeEmbed(member) {
   const guild       = member.guild;
   const memberCount = guild.memberCount;
@@ -340,11 +322,54 @@ function buildWelcomeEmbed(member) {
       .setTimestamp();
 }
 
-// ==========================================
-// BAUT DAS EMBED FÜR EINE ROLLEN-KATEGORIE
-// FIX: guild.roles.fetch() muss VOR dem Aufruf dieser Funktion gemacht werden
-// damit der Cache aktuell ist und <@&ID> korrekt rendert.
-// ==========================================
+function buildRolesOverviewEmbed() {
+  const welcomeDesc =
+      '**Gestalte deinen Auftritt auf dem Server ganz nach deinen Wünschen.**\n\n' +
+      'Scrolle durch die Kategorien unten und reagiere mit dem passenden Emoji um dir Rollen auszusuchen. Reaction wieder entfernen = Rolle wieder entfernen.\n\n' +
+      '🏳️‍🌈 **Pronomen** — Zeig anderen wie sie dich ansprechen können (nur 1 auswählbar)\n' +
+      '🎮 **Plattformen** — Auf welcher Plattform zockst du?\n' +
+      '🕹️ **Game Genres** — Welche Spiele-Genres magst du?\n' +
+      '🌸 **Deine Aura** — Zeig wer du bist\n' +
+      '🔔 **Benachrichtigungen** — Bestimme welche Pings du bekommst\n\n' +
+      '*Alle Rollen sind optional und jederzeit änderbar.*';
+
+  const embed = new EmbedBuilder()
+      .setAuthor({ name: `${SERVER_NAME} · Rollen-Auswahl` })
+      .setTitle('🌙 Willkommen im Rollen-Channel')
+      .setDescription(welcomeDesc)
+      .setColor(SERVER_COLOR)
+      .setFooter({ text: SERVER_NAME })
+      .setTimestamp();
+
+  if (WELCOME_BANNER_URL) embed.setImage(WELCOME_BANNER_URL);
+  if (ROLES_THUMBNAIL_URL) embed.setThumbnail(ROLES_THUMBNAIL_URL);
+
+  return embed;
+}
+
+// Sendet ODER editiert das Deckblatt-Embed. Läuft in eigenem try/catch,
+// damit ein Fehler hier NICHT die Kategorien blockiert.
+async function sendOrUpdateOverview(channel, idsStore) {
+  try {
+    const embed = buildRolesOverviewEmbed();
+
+    if (idsStore.welcome) {
+      try {
+        const msg = await channel.messages.fetch(idsStore.welcome);
+        await msg.edit({ embeds: [embed] });
+        return;
+      } catch (e) {
+        // alte Nachricht nicht mehr auffindbar -> unten neu posten
+      }
+    }
+
+    const sent = await channel.send({ embeds: [embed] });
+    idsStore.welcome = sent.id;
+  } catch (e) {
+    console.error('[DECKBLATT] Konnte Rollen-Deckblatt nicht senden/editieren:', e);
+  }
+}
+
 function buildCategoryEmbed(catKey, cat, guild, index, total) {
   const color = GROUP_COLORS[cat.group] || SERVER_COLOR;
 
@@ -352,7 +377,7 @@ function buildCategoryEmbed(catKey, cat, guild, index, total) {
       .setAuthor({ name: `${SERVER_NAME} · Kategorie ${index} / ${total}` })
       .setTitle(cat.label)
       .setColor(color)
-      .setDescription(`*${cat.description}*`)
+      .setDescription(`*${cat.description}*${cat.unique ? '\n*(nur eine Rolle gleichzeitig auswählbar)*' : ''}`)
       .setFooter({ text: `AuraBot · Reagiere mit einem Emoji um die Rolle zu erhalten oder zu entfernen` });
 
   if (ROLES_THUMBNAIL_URL) embed.setThumbnail(ROLES_THUMBNAIL_URL);
@@ -366,6 +391,36 @@ function buildCategoryEmbed(catKey, cat, guild, index, total) {
   }
 
   return embed;
+}
+
+// Sendet ODER editiert eine Kategorie-Nachricht. Eigenes try/catch pro Kategorie,
+// damit ein Fehler bei EINER Kategorie nicht die restlichen blockiert.
+async function sendOrUpdateCategory(channel, guild, catKey, cat, index, total, idsStore) {
+  try {
+    const embed = buildCategoryEmbed(catKey, cat, guild, index, total);
+    const emojiList = cat.roles.map((r) => r.emoji);
+
+    let sentMsg = null;
+    if (idsStore[catKey]) {
+      try {
+        sentMsg = await channel.messages.fetch(idsStore[catKey]);
+        await sentMsg.edit({ embeds: [embed] });
+      } catch (e) {
+        sentMsg = null;
+      }
+    }
+
+    if (!sentMsg) {
+      sentMsg = await channel.send({ embeds: [embed] });
+      idsStore[catKey] = sentMsg.id;
+    }
+
+    await syncReactions(sentMsg, emojiList);
+    return true;
+  } catch (e) {
+    console.error(`[KATEGORIE] Fehler bei "${catKey}", überspringe und mache mit der nächsten weiter:`, e);
+    return false;
+  }
 }
 
 // ==========================================
@@ -493,9 +548,6 @@ client.on('messageCreate', async (message) => {
   if (!message.guild || !message.member) return;
   if (!message.member.permissions.has('Administrator')) return;
 
-  // ─────────────────────────────────────────
-  // !setup-rules
-  // ─────────────────────────────────────────
   if (message.content === '!setup-rules') {
     const file = new AttachmentBuilder('./Regeln.png');
 
@@ -547,13 +599,7 @@ client.on('messageCreate', async (message) => {
     await message.delete().catch(() => {});
   }
 
-  // ─────────────────────────────────────────
-  // !test-roles
-  // FIX: guild.roles.fetch() stellt sicher dass alle Rollen im Cache sind,
-  // damit <@&ID> im Embed korrekt als Rollenname gerendert wird.
-  // ─────────────────────────────────────────
   if (message.content === '!test-roles') {
-    // Rollen-Cache aktualisieren BEVOR Embeds gebaut werden
     await message.guild.roles.fetch();
 
     const catKeys = Object.keys(categories);
@@ -563,73 +609,20 @@ client.on('messageCreate', async (message) => {
     if (!testMessageIds[channelId]) testMessageIds[channelId] = {};
     const channelTestIds = testMessageIds[channelId];
 
-    // ── Deckblatt ──
-    const welcomeDesc =
-        '**Gestalte deinen Auftritt auf dem Server ganz nach deinen Wünschen.**\n\n' +
-        'Scrolle durch die Kategorien unten und reagiere mit dem passenden Emoji um dir Rollen auszusuchen. Reaction wieder entfernen = Rolle wieder entfernen.\n\n' +
-        '🏳️‍🌈 **Pronomen** — Zeig anderen wie sie dich ansprechen können\n' +
-        '🎮 **Plattformen** — Auf welcher Plattform zockst du?\n' +
-        '🕹️ **Game Genres** — Welche Spiele-Genres magst du?\n' +
-        '🌸 **Deine Aura** — Zeig wer du bist\n' +
-        '🔔 **Benachrichtigungen** — Bestimme welche Pings du bekommst\n\n' +
-        '*Alle Rollen sind optional und jederzeit änderbar.*';
+    await sendOrUpdateOverview(message.channel, channelTestIds);
 
-    const welcomeEmbed = new EmbedBuilder()
-        .setAuthor({ name: `${SERVER_NAME} · Rollen-Auswahl` })
-        .setTitle('🌙 Willkommen im Rollen-Channel')
-        .setDescription(welcomeDesc)
-        .setColor(SERVER_COLOR)
-        .setImage(WELCOME_BANNER_URL)
-        .setFooter({ text: SERVER_NAME })
-        .setTimestamp();
-
-    if (ROLES_THUMBNAIL_URL) welcomeEmbed.setThumbnail(ROLES_THUMBNAIL_URL);
-
-    if (channelTestIds.welcome) {
-      try {
-        const msg = await message.channel.messages.fetch(channelTestIds.welcome);
-        await msg.edit({ embeds: [welcomeEmbed] });
-      } catch (e) {
-        const sent = await message.channel.send({ embeds: [welcomeEmbed] });
-        channelTestIds.welcome = sent.id;
-      }
-    } else {
-      const sent = await message.channel.send({ embeds: [welcomeEmbed] });
-      channelTestIds.welcome = sent.id;
-    }
-
-    // ── Kategorien ──
+    let okCount = 0;
     for (let i = 0; i < catKeys.length; i++) {
       const key = catKeys[i];
-      const cat = categories[key];
-      const embed = buildCategoryEmbed(key, cat, message.guild, i + 1, total);
-      const emojiList = cat.roles.map((r) => r.emoji);
-
-      let sentMsg;
-      if (channelTestIds[key]) {
-        try {
-          sentMsg = await message.channel.messages.fetch(channelTestIds[key]);
-          await sentMsg.edit({ embeds: [embed] });
-        } catch (e) {
-          sentMsg = await message.channel.send({ embeds: [embed] });
-          channelTestIds[key] = sentMsg.id;
-        }
-      } else {
-        sentMsg = await message.channel.send({ embeds: [embed] });
-        channelTestIds[key] = sentMsg.id;
-      }
-
-      await syncReactions(sentMsg, emojiList);
+      const ok = await sendOrUpdateCategory(message.channel, message.guild, key, categories[key], i + 1, total, channelTestIds);
+      if (ok) okCount++;
     }
 
-    const reply = await message.reply('Test-Embeds aktualisiert (nur hier, nicht im echten Rollen-Channel gespeichert). Reactions funktionieren zum Testen ganz normal.');
-    setTimeout(() => reply.delete().catch(() => {}), 6000);
+    const reply = await message.reply(`Test-Embeds aktualisiert: Deckblatt + ${okCount}/${total} Kategorien (nur hier, nicht im echten Rollen-Channel gespeichert). Details zu evtl. Fehlern siehe Konsole.`);
+    setTimeout(() => reply.delete().catch(() => {}), 8000);
     await message.delete().catch(() => {});
   }
 
-  // ─────────────────────────────────────────
-  // !test-roles-clear
-  // ─────────────────────────────────────────
   if (message.content === '!test-roles-clear') {
     const channelId = message.channel.id;
     const channelTestIds = testMessageIds[channelId] || {};
@@ -649,124 +642,50 @@ client.on('messageCreate', async (message) => {
     await message.delete().catch(() => {});
   }
 
-  // ─────────────────────────────────────────
-  // !setup-roles
-  // FIX: guild.roles.fetch() vor dem Embed-Aufbau
-  // ─────────────────────────────────────────
   if (message.content === '!setup-roles') {
-    // Rollen-Cache aktualisieren BEVOR Embeds gebaut werden
     await message.guild.roles.fetch();
 
     const catKeys = Object.keys(categories);
     const total = catKeys.length;
 
-    // ── Deckblatt senden / aktualisieren ──
-    const welcomeDesc =
-        '**Gestalte deinen Auftritt auf dem Server ganz nach deinen Wünschen.**\n\n' +
-        'Scrolle durch die Kategorien unten und reagiere mit dem passenden Emoji um dir Rollen auszusuchen. Reaction wieder entfernen = Rolle wieder entfernen.\n\n' +
-        '🏳️‍🌈 **Pronomen** — Zeig anderen wie sie dich ansprechen können\n' +
-        '🎮 **Plattformen** — Auf welcher Plattform zockst du?\n' +
-        '🕹️ **Game Genres** — Welche Spiele-Genres magst du?\n' +
-        '🌸 **Deine Aura** — Zeig wer du bist\n' +
-        '🔔 **Benachrichtigungen** — Bestimme welche Pings du bekommst\n\n' +
-        '*Alle Rollen sind optional und jederzeit änderbar.*';
+    await sendOrUpdateOverview(message.channel, setupMessageIds);
+    saveStorage();
 
-    const welcomeEmbed = new EmbedBuilder()
-        .setAuthor({ name: `${SERVER_NAME} · Rollen-Auswahl` })
-        .setTitle('🌙 Willkommen im Rollen-Channel')
-        .setDescription(welcomeDesc)
-        .setColor(SERVER_COLOR)
-        .setImage(WELCOME_BANNER_URL)
-        .setFooter({ text: SERVER_NAME })
-        .setTimestamp();
-
-    if (ROLES_THUMBNAIL_URL) welcomeEmbed.setThumbnail(ROLES_THUMBNAIL_URL);
-
-    if (setupMessageIds.welcome) {
-      try {
-        const msg = await message.channel.messages.fetch(setupMessageIds.welcome);
-        await msg.edit({ embeds: [welcomeEmbed] });
-      } catch (e) {
-        const sent = await message.channel.send({ embeds: [welcomeEmbed] });
-        setupMessageIds.welcome = sent.id;
-      }
-    } else {
-      const sent = await message.channel.send({ embeds: [welcomeEmbed] });
-      setupMessageIds.welcome = sent.id;
-    }
-
-    // ── Kategorien senden / aktualisieren ──
+    let okCount = 0;
     for (let i = 0; i < catKeys.length; i++) {
       const key = catKeys[i];
-      const cat = categories[key];
-      const embed = buildCategoryEmbed(key, cat, message.guild, i + 1, total);
-      const emojiList = cat.roles.map((r) => r.emoji);
-
-      let sentMsg;
-      if (setupMessageIds[key]) {
-        try {
-          sentMsg = await message.channel.messages.fetch(setupMessageIds[key]);
-          await sentMsg.edit({ embeds: [embed] });
-        } catch (e) {
-          console.error(`Konnte Embed "${key}" nicht editieren, poste neu:`, e);
-          sentMsg = await message.channel.send({ embeds: [embed] });
-          setupMessageIds[key] = sentMsg.id;
-        }
-      } else {
-        sentMsg = await message.channel.send({ embeds: [embed] });
-        setupMessageIds[key] = sentMsg.id;
-      }
-
-      await syncReactions(sentMsg, emojiList);
+      const ok = await sendOrUpdateCategory(message.channel, message.guild, key, categories[key], i + 1, total, setupMessageIds);
+      if (ok) okCount++;
+      saveStorage();
     }
 
-    saveStorage();
-    const reply = await message.reply('Alle Embeds aktualisiert! ✅');
-    setTimeout(() => reply.delete().catch(() => {}), 4000);
+    const reply = await message.reply(`Deckblatt + ${okCount}/${total} Kategorien aktualisiert! ✅ (bei Fehlern: Konsole checken und \`!setup-roles\` nochmal ausführen)`);
+    setTimeout(() => reply.delete().catch(() => {}), 6000);
     await message.delete().catch(() => {});
   }
 
-  // ─────────────────────────────────────────
-  // !update-roles
-  // FIX: guild.roles.fetch() vor dem Embed-Aufbau
-  // ─────────────────────────────────────────
   if (message.content === '!update-roles') {
     await message.guild.roles.fetch();
 
     const catKeys = Object.keys(categories);
     const total = catKeys.length;
     let updated = 0;
-    let skipped = 0;
+
+    await sendOrUpdateOverview(message.channel, setupMessageIds);
+    saveStorage();
 
     for (let i = 0; i < catKeys.length; i++) {
       const key = catKeys[i];
-      const cat = categories[key];
-      const msgId = setupMessageIds[key];
-      if (!msgId) { skipped++; continue; }
-
-      let sentMsg;
-      try {
-        sentMsg = await message.channel.messages.fetch(msgId);
-      } catch (e) {
-        skipped++;
-        continue;
-      }
-
-      const embed = buildCategoryEmbed(key, cat, message.guild, i + 1, total);
-      const emojiList = cat.roles.map((r) => r.emoji);
-      await sentMsg.edit({ embeds: [embed] });
-      await syncReactions(sentMsg, emojiList);
-      updated++;
+      if (!setupMessageIds[key]) continue;
+      const ok = await sendOrUpdateCategory(message.channel, message.guild, key, categories[key], i + 1, total, setupMessageIds);
+      if (ok) updated++;
     }
 
-    const reply = await message.reply(`${updated} Embed(s) aktualisiert, ${skipped} übersprungen.`);
+    const reply = await message.reply(`${updated} Kategorie(n) aktualisiert.`);
     setTimeout(() => reply.delete().catch(() => {}), 5000);
     await message.delete().catch(() => {});
   }
 
-  // ─────────────────────────────────────────
-  // !delete-roles
-  // ─────────────────────────────────────────
   if (message.content === '!delete-roles') {
     const idsToDelete = Object.entries(setupMessageIds).filter(([, id]) => id);
     let deletedCount = 0;
@@ -788,18 +707,12 @@ client.on('messageCreate', async (message) => {
     await message.delete().catch(() => {});
   }
 
-  // ─────────────────────────────────────────
-  // !test-welcome
-  // ─────────────────────────────────────────
   if (message.content === '!test-welcome') {
     const embed = buildWelcomeEmbed(message.member);
     await message.channel.send({ embeds: [embed] });
     await message.delete().catch(() => {});
   }
 
-  // ─────────────────────────────────────────
-  // !test-stream [Titel]
-  // ─────────────────────────────────────────
   if (message.content.startsWith('!test-stream')) {
     const title = message.content.slice('!test-stream'.length).trim() || 'Test-Stream';
 
@@ -818,6 +731,17 @@ client.on('messageCreate', async (message) => {
 // ==========================================
 // 6. REACTION-INTERAKTIONEN (Regeln + Rollen)
 // ==========================================
+function findCategoryKeyForMessage(messageId) {
+  let catKey = Object.keys(setupMessageIds).find((k) => k !== 'welcome' && setupMessageIds[k] === messageId);
+  if (catKey) return catKey;
+
+  for (const channelTestIds of Object.values(testMessageIds)) {
+    catKey = Object.keys(channelTestIds).find((k) => k !== 'welcome' && channelTestIds[k] === messageId);
+    if (catKey) return catKey;
+  }
+  return null;
+}
+
 client.on('messageReactionAdd', async (reaction, user) => {
   if (user.bot) return;
 
@@ -832,7 +756,6 @@ client.on('messageReactionAdd', async (reaction, user) => {
   const message = reaction.message;
   if (!message.guild) return;
 
-  // ── Regeln akzeptieren ──
   if (message.id === rulesMessageId && emojiMatches(reaction.emoji, RULES_EMOJI)) {
     const guild = message.guild;
     const role = guild.roles.cache.get(VERIFIED_ROLE_ID);
@@ -852,18 +775,7 @@ client.on('messageReactionAdd', async (reaction, user) => {
     return;
   }
 
-  // ── Rollen-Kategorien ──
-  // FIX: Sucht zuerst in setupMessageIds, dann in testMessageIds aller Kanäle.
-  // Dadurch funktionieren Reactions auch bei !test-roles-Nachrichten.
-  let catKey = Object.keys(setupMessageIds).find((k) => k !== 'welcome' && setupMessageIds[k] === message.id);
-
-  if (!catKey) {
-    for (const channelTestIds of Object.values(testMessageIds)) {
-      catKey = Object.keys(channelTestIds).find((k) => k !== 'welcome' && channelTestIds[k] === message.id);
-      if (catKey) break;
-    }
-  }
-
+  const catKey = findCategoryKeyForMessage(message.id);
   if (!catKey) return;
 
   const category = categories[catKey];
@@ -877,6 +789,22 @@ client.on('messageReactionAdd', async (reaction, user) => {
     const guild = message.guild;
     const member = await guild.members.fetch(user.id).catch(() => null);
     if (!member) return;
+
+    if (category.unique) {
+      for (const other of category.roles) {
+        if (other === roleDef) continue;
+
+        const otherRole = resolveRole(guild, other);
+        if (otherRole && member.roles.cache.has(otherRole.id)) {
+          await member.roles.remove(otherRole).catch((e) => console.error('Konnte alte exklusive Rolle nicht entfernen:', e));
+        }
+
+        const otherReaction = message.reactions.cache.find((rxn) => emojiMatches(rxn.emoji, other.emoji));
+        if (otherReaction) {
+          await otherReaction.users.remove(user.id).catch(() => {});
+        }
+      }
+    }
 
     const role = resolveRole(guild, roleDef);
     if (!role) {
@@ -904,19 +832,7 @@ client.on('messageReactionRemove', async (reaction, user) => {
   const message = reaction.message;
   if (!message.guild) return;
 
-  // Regeln-Reaction wird bewusst NICHT rückgängig gemacht
-
-  // ── Rollen-Kategorien ──
-  // FIX: Sucht zuerst in setupMessageIds, dann in testMessageIds aller Kanäle.
-  let catKey = Object.keys(setupMessageIds).find((k) => k !== 'welcome' && setupMessageIds[k] === message.id);
-
-  if (!catKey) {
-    for (const channelTestIds of Object.values(testMessageIds)) {
-      catKey = Object.keys(channelTestIds).find((k) => k !== 'welcome' && channelTestIds[k] === message.id);
-      if (catKey) break;
-    }
-  }
-
+  const catKey = findCategoryKeyForMessage(message.id);
   if (!catKey) return;
 
   const category = categories[catKey];
