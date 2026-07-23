@@ -35,7 +35,7 @@ function loadStorage() {
     const raw = fs.readFileSync(STORAGE_FILE, 'utf8');
     return JSON.parse(raw);
   } catch {
-    return { rulesMessageId: null, setupMessageIds: {}, twitchWasLive: null };
+    return { rulesMessageId: null, setupMessageIds: {}, twitchWasLive: null, friendsWasLive: {} };
   }
 }
 
@@ -43,7 +43,7 @@ function saveStorage() {
   try {
     fs.writeFileSync(
         STORAGE_FILE,
-        JSON.stringify({ rulesMessageId, setupMessageIds, twitchWasLive }, null, 2)
+        JSON.stringify({ rulesMessageId, setupMessageIds, twitchWasLive, friendsWasLive }, null, 2)
     );
   } catch (e) {
     console.error('Konnte bot-data.json nicht speichern:', e);
@@ -82,9 +82,22 @@ const WELCOME_CHANNEL_ID = "1504963423241240636";
 const RULES_CHANNEL_ID   = "1504963422733734008";
 const ROLES_CHANNEL_ID   = "1504998862132084807";
 const MAINCHAT_CHANNEL_ID = "1504963423241240642";
-const STREAM_ALERT_CHANNEL_ID = "1504963423681773572";
+const STREAM_ALERT_CHANNEL_ID = "1504963423241240642";
 
 const STREAM_ALERTS_ROLE_ID = "1507128739895578676";
+
+// ==========================================
+// TWITCH FREUNDE – LIVE-BENACHRICHTIGUNGEN
+// ==========================================
+const TWITCH_FRIENDS_CHANNEL_ID = "1529836059100450826";
+const TWITCH_FRIENDS_ROLE_ID    = "1529909736806420542";
+const TWITCH_FRIENDS_LOGINS     = [
+  "svlinskii",
+  "selinalrp",
+  "yasirk_",
+  "katadegy",
+  "lauraohneaura"
+];
 
 const TWITCH_USER_LOGIN = "Auralune1__";
 const TWITCH_CHANNEL_URL = `https://www.twitch.tv/${TWITCH_USER_LOGIN}`;
@@ -113,6 +126,10 @@ const GROUP_COLORS = {
 
 let rulesMessageId = null;
 let twitchWasLive = null;
+
+// Status-Tracking für jeden Twitch-Freund: { username: true/false/null }
+// null = erster Start, noch nicht geprüft (kein Ping beim Botstart)
+let friendsWasLive = {};
 
 // Merkt sich Test-Nachrichten pro Kanal: { [channelId]: { [catKey]: messageId } }
 const testMessageIds = {};
@@ -202,6 +219,9 @@ let setupMessageIds = {
   if (saved.rulesMessageId) rulesMessageId = saved.rulesMessageId;
   if (saved.setupMessageIds) setupMessageIds = { ...setupMessageIds, ...saved.setupMessageIds };
   if (typeof saved.twitchWasLive === 'boolean') twitchWasLive = saved.twitchWasLive;
+  if (saved.friendsWasLive && typeof saved.friendsWasLive === 'object') {
+    friendsWasLive = saved.friendsWasLive;
+  }
 }
 
 // ==========================================
@@ -347,8 +367,6 @@ function buildRolesOverviewEmbed() {
   return embed;
 }
 
-// Sendet ODER editiert das Deckblatt-Embed. Läuft in eigenem try/catch,
-// damit ein Fehler hier NICHT die Kategorien blockiert.
 async function sendOrUpdateOverview(channel, idsStore) {
   try {
     const embed = buildRolesOverviewEmbed();
@@ -393,8 +411,6 @@ function buildCategoryEmbed(catKey, cat, guild, index, total) {
   return embed;
 }
 
-// Sendet ODER editiert eine Kategorie-Nachricht. Eigenes try/catch pro Kategorie,
-// damit ein Fehler bei EINER Kategorie nicht die restlichen blockiert.
 async function sendOrUpdateCategory(channel, guild, catKey, cat, index, total, idsStore) {
   try {
     const embed = buildCategoryEmbed(catKey, cat, guild, index, total);
@@ -424,7 +440,7 @@ async function sendOrUpdateCategory(channel, guild, catKey, cat, index, total, i
 }
 
 // ==========================================
-// TWITCH – AUTOMATISCHE LIVE-ERKENNUNG
+// TWITCH – AUTOMATISCHE LIVE-ERKENNUNG (Auralune)
 // ==========================================
 let twitchAppToken = null;
 
@@ -537,6 +553,128 @@ async function checkTwitchStream() {
     saveStorage();
   } catch (e) {
     console.error('[TWITCH] Fehler beim Live-Check:', e);
+  }
+}
+
+// ==========================================
+// TWITCH FREUNDE – LIVE-ERKENNUNG & PINGS
+// ==========================================
+
+/**
+ * Holt die aktuellen Live-Streams für alle Twitch-Freunde auf einmal
+ * (Batch-Anfrage an die Twitch API).
+ * Gibt ein Map zurück: { username_lower -> stream-Objekt oder null }
+ */
+async function fetchFriendsStreams() {
+  const token = await getTwitchAppToken();
+
+  const query = TWITCH_FRIENDS_LOGINS
+      .map(u => `user_login=${encodeURIComponent(u.toLowerCase())}`)
+      .join('&');
+
+  const res = await fetch(
+      `https://api.twitch.tv/helix/streams?${query}`,
+      {
+        headers: {
+          'Client-Id': process.env.TWITCH_CLIENT_ID,
+          'Authorization': `Bearer ${token}`
+        }
+      }
+  );
+  if (!res.ok) throw new Error(`Twitch Freunde API Fehler: ${res.status}`);
+  const data = await res.json();
+
+  // Erstelle eine Map: lowercase-Name -> Stream-Objekt
+  const liveMap = {};
+  if (data.data) {
+    for (const stream of data.data) {
+      liveMap[stream.user_login.toLowerCase()] = stream;
+    }
+  }
+
+  return liveMap;
+}
+
+function buildFriendStreamEmbed(stream) {
+  const channelUrl = `https://www.twitch.tv/${stream.user_login}`;
+  let thumbnail = null;
+  if (stream.thumbnail_url) {
+    thumbnail = stream.thumbnail_url
+        .replace('{width}', '640')
+        .replace('{height}', '360') + `?t=${Date.now()}`;
+  }
+
+  const embed = new EmbedBuilder()
+      .setColor('#9146FF')
+      .setAuthor({ name: `${stream.user_name || stream.user_login} ist jetzt live auf Twitch! 🎮` })
+      .setTitle(stream.title || 'Live auf Twitch')
+      .setURL(channelUrl)
+      .addFields(
+          { name: '🎮 Spiel', value: stream.game_name || 'Unbekannt', inline: true },
+          { name: '👁️ Zuschauer', value: `${stream.viewer_count ?? 0}`, inline: true }
+      )
+      .setFooter({ text: `${SERVER_NAME} · Twitch Freunde` })
+      .setTimestamp();
+
+  if (thumbnail) embed.setImage(thumbnail);
+  return embed;
+}
+
+async function announceFriendLive(stream) {
+  const channel = client.channels.cache.get(TWITCH_FRIENDS_CHANNEL_ID);
+  if (!channel) {
+    console.error(`[TWITCH FREUNDE] Kanal ${TWITCH_FRIENDS_CHANNEL_ID} nicht gefunden!`);
+    return;
+  }
+
+  const channelUrl = `https://www.twitch.tv/${stream.user_login}`;
+  const embed = buildFriendStreamEmbed(stream);
+  const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+          .setLabel('Jetzt zuschauen')
+          .setEmoji('🔴')
+          .setStyle(ButtonStyle.Link)
+          .setURL(channelUrl)
+  );
+
+  await channel.send({
+    content: `<@&${TWITCH_FRIENDS_ROLE_ID}> **${stream.user_name || stream.user_login}** ist live!`,
+    embeds: [embed],
+    components: [row]
+  });
+  console.log(`[TWITCH FREUNDE] Live-Ankündigung für ${stream.user_login} gesendet.`);
+}
+
+async function checkFriendStreams() {
+  if (!process.env.TWITCH_CLIENT_ID || !process.env.TWITCH_CLIENT_SECRET) {
+    return;
+  }
+
+  try {
+    const liveMap = await fetchFriendsStreams();
+
+    for (const login of TWITCH_FRIENDS_LOGINS) {
+      const key    = login.toLowerCase();
+      const stream = liveMap[key] || null;
+      const isLive = !!stream;
+
+      // Beim ersten Start (null) nur Zustand merken, kein Ping
+      if (friendsWasLive[key] === undefined || friendsWasLive[key] === null) {
+        friendsWasLive[key] = isLive;
+        continue;
+      }
+
+      // Wenn vorher offline und jetzt live -> Ping schicken
+      if (isLive && !friendsWasLive[key]) {
+        await announceFriendLive(stream);
+      }
+
+      friendsWasLive[key] = isLive;
+    }
+
+    saveStorage();
+  } catch (e) {
+    console.error('[TWITCH FREUNDE] Fehler beim Live-Check:', e);
   }
 }
 
@@ -726,6 +864,24 @@ client.on('messageCreate', async (message) => {
     await announceStreamLive(fakeStream);
     await message.delete().catch(() => {});
   }
+
+  // ── TEST-BEFEHL: Twitch-Freund als live simulieren ──
+  // Nutzung: !test-friend svlinskii
+  if (message.content.startsWith('!test-friend')) {
+    const login = message.content.slice('!test-friend'.length).trim() || TWITCH_FRIENDS_LOGINS[0];
+
+    const fakeStream = {
+      user_login: login.toLowerCase(),
+      user_name:  login,
+      title:      'Test-Stream',
+      game_name:  'Minecraft',
+      viewer_count: 0,
+      thumbnail_url: ''
+    };
+
+    await announceFriendLive(fakeStream);
+    await message.delete().catch(() => {});
+  }
 });
 
 // ==========================================
@@ -791,7 +947,6 @@ client.on('messageReactionAdd', async (reaction, user) => {
     if (!member) return;
 
     if (category.unique) {
-      // Nachricht neu laden damit der Reaktions-Cache aktuell ist
       let freshMessage = message;
       try { freshMessage = await message.fetch(true); } catch (e) { /* Fallback auf gecachte Version */ }
 
@@ -803,12 +958,10 @@ client.on('messageReactionAdd', async (reaction, user) => {
           await member.roles.remove(otherRole).catch((e) => console.error('Konnte alte exklusive Rolle nicht entfernen:', e));
         }
 
-        // Reaktion aus frischem Cache entfernen
         const otherReaction = freshMessage.reactions.cache.find((rxn) => emojiMatches(rxn.emoji, other.emoji));
         if (otherReaction) {
           await otherReaction.users.remove(user.id).catch(() => {});
         } else {
-          // Fallback: direkt per Emoji-Identifier ansprechen
           try {
             const resolved = freshMessage.reactions.resolve(emojiForReact(other.emoji));
             if (resolved) await resolved.users.remove(user.id).catch(() => {});
@@ -895,8 +1048,13 @@ client.once('ready', () => {
     url: TWITCH_CHANNEL_URL
   });
 
+  // Auralune Live-Check
   checkTwitchStream();
   setInterval(checkTwitchStream, TWITCH_POLL_INTERVAL_MS);
+
+  // Twitch Freunde Live-Check (gleiche Poll-Interval)
+  checkFriendStreams();
+  setInterval(checkFriendStreams, TWITCH_POLL_INTERVAL_MS);
 });
 
 client.on('error', (e) => console.error('[CLIENT ERROR]', e));
