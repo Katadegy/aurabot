@@ -123,7 +123,7 @@ const testMessageIds = {};
 // ==========================================
 const categories = {
   cat_pronouns: {
-    label: '🏳️‍🌈 Pronomen',
+    label: '✨ Pronomen',
     description: 'Zeig anderen, wie sie dich ansprechen können.',
     group: 'pronouns',
     unique: true,
@@ -326,7 +326,7 @@ function buildRolesOverviewEmbed() {
   const welcomeDesc =
       '**Gestalte deinen Auftritt auf dem Server ganz nach deinen Wünschen.**\n\n' +
       'Scrolle durch die Kategorien unten und reagiere mit dem passenden Emoji um dir Rollen auszusuchen. Reaction wieder entfernen = Rolle wieder entfernen.\n\n' +
-      '🏳️‍🌈 **Pronomen** — Zeig anderen wie sie dich ansprechen können (nur 1 auswählbar)\n' +
+      '✨ **Pronomen** — Zeig anderen wie sie dich ansprechen können (nur 1 auswählbar)\n' +
       '🎮 **Plattformen** — Auf welcher Plattform zockst du?\n' +
       '🕹️ **Game Genres** — Welche Spiele-Genres magst du?\n' +
       '🌸 **Deine Aura** — Zeig wer du bist\n' +
@@ -791,6 +791,10 @@ client.on('messageReactionAdd', async (reaction, user) => {
     if (!member) return;
 
     if (category.unique) {
+      // Nachricht neu laden damit der Reaktions-Cache aktuell ist
+      let freshMessage = message;
+      try { freshMessage = await message.fetch(true); } catch (e) { /* Fallback auf gecachte Version */ }
+
       for (const other of category.roles) {
         if (other === roleDef) continue;
 
@@ -799,9 +803,16 @@ client.on('messageReactionAdd', async (reaction, user) => {
           await member.roles.remove(otherRole).catch((e) => console.error('Konnte alte exklusive Rolle nicht entfernen:', e));
         }
 
-        const otherReaction = message.reactions.cache.find((rxn) => emojiMatches(rxn.emoji, other.emoji));
+        // Reaktion aus frischem Cache entfernen
+        const otherReaction = freshMessage.reactions.cache.find((rxn) => emojiMatches(rxn.emoji, other.emoji));
         if (otherReaction) {
           await otherReaction.users.remove(user.id).catch(() => {});
+        } else {
+          // Fallback: direkt per Emoji-Identifier ansprechen
+          try {
+            const resolved = freshMessage.reactions.resolve(emojiForReact(other.emoji));
+            if (resolved) await resolved.users.remove(user.id).catch(() => {});
+          } catch { /* ignorieren */ }
         }
       }
     }
