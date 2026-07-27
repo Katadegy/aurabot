@@ -78,9 +78,9 @@ const SERVER_NAME = "Auralune's community";
 
 const VERIFIED_ROLE_ID = "1504963421345419352";
 
-const WELCOME_CHANNEL_ID = "1504963423241240636";
-const RULES_CHANNEL_ID   = "1504963422733734008";
-const ROLES_CHANNEL_ID   = "1504998862132084807";
+const WELCOME_CHANNEL_ID  = "1504963423241240636";
+const RULES_CHANNEL_ID    = "1504963422733734008";
+const ROLES_CHANNEL_ID    = "1504998862132084807";
 const MAINCHAT_CHANNEL_ID = "1504963423241240642";
 const STREAM_ALERT_CHANNEL_ID = "1504963423241240642";
 
@@ -99,7 +99,7 @@ const TWITCH_FRIENDS_LOGINS     = [
   "lauraohneaura"
 ];
 
-const TWITCH_USER_LOGIN = "Auralune1__";
+const TWITCH_USER_LOGIN  = "Auralune1__";
 const TWITCH_CHANNEL_URL = `https://www.twitch.tv/${TWITCH_USER_LOGIN}`;
 
 const TWITCH_POLL_INTERVAL_MS = 60 * 1000;
@@ -109,10 +109,19 @@ const TWITCH_POLL_INTERVAL_MS = 60 * 1000;
 // zu generieren -- postet der Bot zu früh, ist die thumbnail_url noch nicht erreichbar
 // und das Bild bleibt in der Nachricht für immer kaputt. Die Verzögerung gibt Twitch Zeit,
 // danach werden FRISCHE Stream-Daten (inkl. funktionierendem Thumbnail) geholt.
-const THUMBNAIL_DELAY_MS = 30 * 1000; // 30 Sekunden
+const THUMBNAIL_DELAY_MS = 50 * 1000; // 50 Sekunden
 
-const WELCOME_BANNER_URL = "https://i.imgur.com/ou9vHWx.png";
-const ROLES_THUMBNAIL_URL = "https://i.imgur.com/oeyctCl.gif";
+// ==========================================
+// BILDER-KONFIGURATION
+// ==========================================
+// Bild im Willkommens-Embed: leer lassen = kein Bild
+const WELCOME_BANNER_URL = "";
+
+// Bild im Rollen-Übersichts-Embed: eigenen Link eintragen
+const ROLES_OVERVIEW_IMAGE_URL = "https://github.com/Katadegy/Media/blob/main/f8dac66c1e8ede278eab5c5ec58a0433.gif?raw=true"; // ← hier deinen Imgur/Discord-Bild-Link eintragen
+
+// Thumbnail (kleines Bild rechts oben) in Rollen-Embeds
+const ROLES_THUMBNAIL_URL = "https://raw.githubusercontent.com/Katadegy/Media/refs/heads/main/butterflies-beautiful.gif";
 
 const categoryImages = {
   cat_pronouns:      "",
@@ -317,13 +326,16 @@ async function syncReactions(message, emojiList) {
   }
 }
 
+// ==========================================
+// WELCOME-EMBED – kein Bild
+// ==========================================
 function buildWelcomeEmbed(member) {
   const guild       = member.guild;
   const memberCount = guild.memberCount;
   const avatarUrl   = member.user.displayAvatarURL({ size: 256 });
   const createdUnix = Math.floor(member.user.createdTimestamp / 1000);
 
-  return new EmbedBuilder()
+  const embed = new EmbedBuilder()
       .setAuthor({ name: `${SERVER_NAME} · Neues Mitglied` })
       .setTitle(`🌸 Willkommen ${member.displayName}! 🌸`)
       .setColor(SERVER_COLOR)
@@ -341,11 +353,16 @@ function buildWelcomeEmbed(member) {
           { name: '📅 Account seit', value: `<t:${createdUnix}:R>`, inline: true }
       )
       .setThumbnail(avatarUrl)
-      .setImage(WELCOME_BANNER_URL)
+      // kein .setImage() — Welcome-Embed hat kein Banner-Bild
       .setFooter({ text: `${SERVER_NAME}` })
       .setTimestamp();
+
+  return embed;
 }
 
+// ==========================================
+// ROLLEN-ÜBERSICHT-EMBED – eigenes Bild
+// ==========================================
 function buildRolesOverviewEmbed() {
   const welcomeDesc =
       '**Gestalte deinen Auftritt auf dem Server ganz nach deinen Wünschen.**\n\n' +
@@ -365,7 +382,8 @@ function buildRolesOverviewEmbed() {
       .setFooter({ text: SERVER_NAME })
       .setTimestamp();
 
-  if (WELCOME_BANNER_URL) embed.setImage(WELCOME_BANNER_URL);
+  // Eigenes Bild für die Rollen-Übersicht (ROLES_OVERVIEW_IMAGE_URL oben eintragen)
+  if (ROLES_OVERVIEW_IMAGE_URL) embed.setImage(ROLES_OVERVIEW_IMAGE_URL);
   if (ROLES_THUMBNAIL_URL) embed.setThumbnail(ROLES_THUMBNAIL_URL);
 
   return embed;
@@ -535,8 +553,7 @@ async function announceStreamLive(stream) {
 }
 
 // Wartet THUMBNAIL_DELAY_MS, holt dann FRISCHE Stream-Daten (damit das Thumbnail
-// inzwischen existiert) und postet erst dann die Ankündigung. Prüft dabei erneut,
-// ob der Stream überhaupt noch läuft (falls er in der Zwischenzeit schon endete).
+// inzwischen existiert) und postet erst dann die Ankündigung.
 function scheduleAuraluneAnnouncement() {
   setTimeout(async () => {
     try {
@@ -678,7 +695,6 @@ async function announceFriendLive(stream) {
 }
 
 // Wartet THUMBNAIL_DELAY_MS, holt dann FRISCHE Stream-Daten für diesen Freund
-// (damit das Thumbnail inzwischen existiert) und postet erst dann.
 function scheduleFriendAnnouncement(login) {
   setTimeout(async () => {
     try {
@@ -750,7 +766,7 @@ client.on('messageCreate', async (message) => {
             { name: '👑  Moderatoren & Regeln', value: 'Die Moderatoren haben das letzte Wort.\nBei Streitigkeiten oder Unklarheiten: einfach die Mods anschreiben.\nWer die Regeln wiederholt missachtet, wird gemutet oder vom Server entfernt.' }
         )
         .setColor(SERVER_COLOR)
-        .setImage('attachment://Regeln.png')
+        .setImage('attachment://Regeln.png')   // ← nur hier das Regeln-Bild
         .setFooter({ text: `${SERVER_NAME} · Reagiere mit ${RULES_EMOJI} um alle Regeln zu akzeptieren.` });
 
     if (!rulesMessageId) {
