@@ -104,6 +104,13 @@ const TWITCH_CHANNEL_URL = `https://www.twitch.tv/${TWITCH_USER_LOGIN}`;
 
 const TWITCH_POLL_INTERVAL_MS = 60 * 1000;
 
+// Wie lange gewartet wird, BEVOR die Live-Ankündigung tatsächlich gepostet wird.
+// Twitch braucht nach Stream-Start ein paar Sekunden, um das Vorschaubild (Thumbnail)
+// zu generieren -- postet der Bot zu früh, ist die thumbnail_url noch nicht erreichbar
+// und das Bild bleibt in der Nachricht für immer kaputt. Die Verzögerung gibt Twitch Zeit,
+// danach werden FRISCHE Stream-Daten (inkl. funktionierendem Thumbnail) geholt.
+const THUMBNAIL_DELAY_MS = 30 * 1000; // 30 Sekunden
+
 const WELCOME_BANNER_URL = "https://i.imgur.com/ou9vHWx.png";
 const ROLES_THUMBNAIL_URL = "https://i.imgur.com/oeyctCl.gif";
 
@@ -128,15 +135,12 @@ let rulesMessageId = null;
 let twitchWasLive = null;
 
 // Status-Tracking für jeden Twitch-Freund: { username: true/false/null }
-// null = erster Start, noch nicht geprüft (kein Ping beim Botstart)
 let friendsWasLive = {};
 
-// Merkt sich Test-Nachrichten pro Kanal: { [channelId]: { [catKey]: messageId } }
 const testMessageIds = {};
 
 // ==========================================
 // 4. ROLLEN-KATEGORIEN
-// unique: true -> immer nur EINE Rolle der Kategorie gleichzeitig aktiv.
 // ==========================================
 const categories = {
   cat_pronouns: {
@@ -530,6 +534,24 @@ async function announceStreamLive(stream) {
   console.log(`[TWITCH] Live-Ankündigung für ${TWITCH_USER_LOGIN} gesendet.`);
 }
 
+// Wartet THUMBNAIL_DELAY_MS, holt dann FRISCHE Stream-Daten (damit das Thumbnail
+// inzwischen existiert) und postet erst dann die Ankündigung. Prüft dabei erneut,
+// ob der Stream überhaupt noch läuft (falls er in der Zwischenzeit schon endete).
+function scheduleAuraluneAnnouncement() {
+  setTimeout(async () => {
+    try {
+      const freshStream = await fetchCurrentStream();
+      if (freshStream) {
+        await announceStreamLive(freshStream);
+      } else {
+        console.log('[TWITCH] Stream war beim verzögerten Check schon wieder offline, keine Ankündigung gesendet.');
+      }
+    } catch (e) {
+      console.error('[TWITCH] Fehler bei verzögerter Ankündigung:', e);
+    }
+  }, THUMBNAIL_DELAY_MS);
+}
+
 async function checkTwitchStream() {
   if (!process.env.TWITCH_CLIENT_ID || !process.env.TWITCH_CLIENT_SECRET) {
     return;
@@ -546,7 +568,7 @@ async function checkTwitchStream() {
     }
 
     if (isLive && !twitchWasLive) {
-      await announceStreamLive(stream);
+      scheduleAuraluneAnnouncement();
     }
 
     twitchWasLive = isLive;
@@ -559,12 +581,6 @@ async function checkTwitchStream() {
 // ==========================================
 // TWITCH FREUNDE – LIVE-ERKENNUNG & PINGS
 // ==========================================
-
-/**
- * Holt die aktuellen Live-Streams für alle Twitch-Freunde auf einmal
- * (Batch-Anfrage an die Twitch API).
- * Gibt ein Map zurück: { username_lower -> stream-Objekt oder null }
- */
 async function fetchFriendsStreams() {
   const token = await getTwitchAppToken();
 
@@ -584,7 +600,6 @@ async function fetchFriendsStreams() {
   if (!res.ok) throw new Error(`Twitch Freunde API Fehler: ${res.status}`);
   const data = await res.json();
 
-  // Erstelle eine Map: lowercase-Name -> Stream-Objekt
   const liveMap = {};
   if (data.data) {
     for (const stream of data.data) {
@@ -593,6 +608,23 @@ async function fetchFriendsStreams() {
   }
 
   return liveMap;
+}
+
+// Holt den aktuellen Stream für EINEN einzelnen Freund (für den verzögerten Re-Check)
+async function fetchSingleFriendStream(login) {
+  const token = await getTwitchAppToken();
+  const res = await fetch(
+      `https://api.twitch.tv/helix/streams?user_login=${encodeURIComponent(login.toLowerCase())}`,
+      {
+        headers: {
+          'Client-Id': process.env.TWITCH_CLIENT_ID,
+          'Authorization': `Bearer ${token}`
+        }
+      }
+  );
+  if (!res.ok) throw new Error(`Twitch Freunde API Fehler: ${res.status}`);
+  const data = await res.json();
+  return (data.data && data.data.length > 0) ? data.data[0] : null;
 }
 
 function buildFriendStreamEmbed(stream) {
@@ -645,6 +677,23 @@ async function announceFriendLive(stream) {
   console.log(`[TWITCH FREUNDE] Live-Ankündigung für ${stream.user_login} gesendet.`);
 }
 
+// Wartet THUMBNAIL_DELAY_MS, holt dann FRISCHE Stream-Daten für diesen Freund
+// (damit das Thumbnail inzwischen existiert) und postet erst dann.
+function scheduleFriendAnnouncement(login) {
+  setTimeout(async () => {
+    try {
+      const freshStream = await fetchSingleFriendStream(login);
+      if (freshStream) {
+        await announceFriendLive(freshStream);
+      } else {
+        console.log(`[TWITCH FREUNDE] ${login} war beim verzögerten Check schon wieder offline, keine Ankündigung gesendet.`);
+      }
+    } catch (e) {
+      console.error(`[TWITCH FREUNDE] Fehler bei verzögerter Ankündigung für ${login}:`, e);
+    }
+  }, THUMBNAIL_DELAY_MS);
+}
+
 async function checkFriendStreams() {
   if (!process.env.TWITCH_CLIENT_ID || !process.env.TWITCH_CLIENT_SECRET) {
     return;
@@ -658,15 +707,13 @@ async function checkFriendStreams() {
       const stream = liveMap[key] || null;
       const isLive = !!stream;
 
-      // Beim ersten Start (null) nur Zustand merken, kein Ping
       if (friendsWasLive[key] === undefined || friendsWasLive[key] === null) {
         friendsWasLive[key] = isLive;
         continue;
       }
 
-      // Wenn vorher offline und jetzt live -> Ping schicken
       if (isLive && !friendsWasLive[key]) {
-        await announceFriendLive(stream);
+        scheduleFriendAnnouncement(login);
       }
 
       friendsWasLive[key] = isLive;
